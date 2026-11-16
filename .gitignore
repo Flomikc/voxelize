@@ -1,0 +1,45 @@
+# --- PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+.pytest_cache/
+
+# --- ML ВЕСА И КЭШ ---
+# Сюда скачиваются гигабайты моделей (TripoSR, VGGT, rembg)
+models/
+cache/
+*.pth
+*.ckpt
+*.onnx
+*.npz
+
+# --- JAVA / MAVEN ---
+backend/target/
+*.class
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# --- ДАННЫЕ ЗАДАЧ ---
+# Тут хранятся загруженные фото и сгенерированные 3D-модели
+data/
+tasks/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.iml
+.DS_Store
+.sh
+
+# --- ЛОГИ ---
+*.log
+
+# --- MINICONDA ---
+# Игнорируем установщик и саму папку с окружением, если она внутри проекта
+Miniconda3-latest-Linux-x86_64.sh
+miniconda3/

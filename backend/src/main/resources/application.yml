@@ -1,0 +1,33 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: photo3d-backend
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  servlet:
+    multipart:
+      max-file-size: 25MB       # технический потолок; бизнес-лимит проверяется в StorageService
+      max-request-size: 300MB
+
+app:
+  queue-capacity: 20            # сколько задач может ждать единственного воркера
+  storage:
+    data-dir: ${DATA_DIR:./data}   # общий том с ml-service (в Docker: /data)
+    max-files: 20
+    max-file-size-mb: 20
+    retention-hours: 24         # через сколько часов удалять завершённые задачи с диска
+  ml:
+    base-url: ${ML_SERVICE_URL:http://ml-service:8000}
+    poll-interval-ms: 1000
+    timeout-minutes: 60         # на CPU генерация может занимать десятки минут
+    max-poll-failures: 10       # подряд неудачных опросов до признания сервиса упавшим
+    submit-retries: 5           # ML-сервис может ещё стартовать
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
