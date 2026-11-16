@@ -43,3 +43,16 @@ tasks/
 # Игнорируем установщик и саму папку с окружением, если она внутри проекта
 Miniconda3-latest-Linux-x86_64.sh
 miniconda3/
+
+# --- ДАННЫЕ ЗАДАЧ И СБОРКИ ---
+data/
+backend/data/
+backend/target/
+
+# --- PYTHON CACHE ---
+__pycache__/
+*.pyc
+
+# --- УСТАНОВЩИКИ И СКАЧАННЫЕ РЕПОЗИТОРИИ ---
+ml-service/Miniconda3-latest-Linux-x86_64.sh
+ml-service/TripoSR/

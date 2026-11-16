@@ -1,5 +1,8 @@
 """1 фото: удаление фона (rembg) -> TripoSR -> меш с vertex colors -> GLB."""
 from __future__ import annotations
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'TripoSR')))
 
 import logging
 from contextlib import contextmanager

@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8081
   shutdown: graceful
 
 spring:
@@ -20,11 +20,8 @@ app:
     max-file-size-mb: 20
     retention-hours: 24         # через сколько часов удалять завершённые задачи с диска
   ml:
-    base-url: ${ML_SERVICE_URL:http://ml-service:8000}
+    base-url: ${ML_SERVICE_URL:http://localhost:8000} # <-- ИЗМЕНИТЬ ЗДЕСЬ
     poll-interval-ms: 1000
-    timeout-minutes: 60         # на CPU генерация может занимать десятки минут
-    max-poll-failures: 10       # подряд неудачных опросов до признания сервиса упавшим
-    submit-retries: 5           # ML-сервис может ещё стартовать
 
 management:
   endpoints:
