@@ -49,13 +49,18 @@ def run(job: Job, progress: ProgressReporter) -> None:
         del scene_codes
 
     raw = work / "mesh_raw.ply"
-    mesh.export(raw)                                   # чекпоинт на диске; модель уже выгружена
+    mesh.export(raw)
     del mesh
     free_memory()
 
-    # --- этап 3: экспорт ---
     progress(Stage.TEXTURING, 85, "Экспорт в GLB (vertex colors)...")
-    mesh = trimesh.load(raw, process=False)
+    
+    # Загружаем с process=True, чтобы trimesh корректно собрал визуальные данные
+    mesh = trimesh.load(raw, process=True) 
+    
+    # Принудительно проверяем, что цвета на месте
+    print("DEBUG: Тип визуала:", mesh.visual.kind)
+    
     mesh = export_glb.normalize_mesh(export_glb.triposr_to_gltf_axes(mesh))
     export_glb.export_glb(mesh, job.output_path)
 

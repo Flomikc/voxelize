@@ -96,11 +96,12 @@
       <div class="panel-body">
         <div class="stage" id="viewer-stage">
           <model-viewer id="viewer" camera-controls auto-rotate touch-action="pan-y"
-                        shadow-intensity="1" shadow-softness="0.8" exposure="1"
-                        environment-image="neutral" interaction-prompt="auto"
-                        alt="Сгенерированная 3D-модель">
-            <div slot="progress-bar"></div>
-          </model-viewer>
+            shadow-intensity="1" shadow-softness="0.8" exposure="1"
+            environment-image="neutral" interaction-prompt="auto"
+            field-of-view="30deg" camera-orbit="0deg 75deg 105%"
+            alt="Сгенерированная 3D-модель">
+  <div slot="progress-bar"></div>
+  </model-viewer>
           <div class="loader" id="loader">
             <p>загрузка модели в просмотрщик…</p>
             <div class="mini-bar"><div id="loader-bar"></div></div>
