@@ -9,6 +9,9 @@ psutil>=5.9
 trimesh>=4.3
 open3d>=0.18,<0.19       # Poisson-реконструкция
 rembg>=2.0.57
+xatlas>=0.0.9               # UV-развёртка (запускается в подпроцессе)
+fast-simplification>=0.1.7  # быстрый quadric decimation для trimesh
+scikit-image>=0.22       # marching cubes вместо torchmcubes
 onnxruntime>=1.17        # бэкенд rembg на CPU (для GPU: onnxruntime-gpu)
 
 # ---- Ставятся в Dockerfile отдельно (следующий шаг) ----

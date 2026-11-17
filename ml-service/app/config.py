@@ -47,7 +47,13 @@ class Settings:
     max_points: int              # потолок числа точек перед Poisson
     poisson_depth: int           # 8 (CPU) .. 10 (детальнее, тяжелее)
     density_trim: float          # доля вершин Poisson с низкой плотностью, которую срезаем
-    target_triangles: int        # потолок числа треугольников итогового меша
+    target_triangles: int        # потолок числа треугольников итогового меша (multi-view)
+
+    # --- текстуры и пост-обработка ---
+    texture_size: int            # 0 = авто (по числу вершин), иначе 512 / 1024 / 2048 / 4096
+    uv_max_faces: int            # больше граней -> без UV (vertex colors): xatlas слишком долгий
+    uv_timeout_s: int            # лимит времени на UV-развёртку, затем откат на vertex colors
+    triposr_axes: str            # ориентация TripoSR -> glTF, см. export_glb.parse_axes
 
 
 @lru_cache(maxsize=1)
@@ -75,4 +81,8 @@ def get_settings() -> Settings:
         poisson_depth=_int("POISSON_DEPTH", 8),
         density_trim=_float("DENSITY_TRIM", 0.08),
         target_triangles=_int("TARGET_TRIANGLES", 120_000),
+        texture_size=_int("TEXTURE_SIZE", 0),
+        uv_max_faces=_int("UV_MAX_FACES", 300_000),
+        uv_timeout_s=_int("UV_TIMEOUT_S", 180),
+        triposr_axes=os.getenv("TRIPOSR_AXES", "-y,z,-x"),
     )

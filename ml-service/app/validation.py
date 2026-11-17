@@ -35,4 +35,5 @@ def build_job(req: GenerateRequest, cfg: Settings) -> Job:
     if not work.is_relative_to(task_dir) or not out.is_relative_to(task_dir) or out.suffix != ".glb":
         raise HTTPException(400, "work_dir/output_path должны лежать внутри каталога задачи")
 
-    return Job(task_id=req.task_id, input_files=sorted(files), work_dir=work, output_path=out)
+    return Job(task_id=req.task_id, input_files=sorted(files), work_dir=work, output_path=out,
+               options=req.options)
