@@ -1,5 +1,6 @@
 package com.example.photo3d.model;
 
+import com.example.photo3d.dto.GenerateOptions;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
@@ -11,5 +12,6 @@ public record MlGenerateRequest(
         @JsonProperty("task_id") String taskId,
         @JsonProperty("input_files") List<String> inputFiles,
         @JsonProperty("work_dir") String workDir,
-        @JsonProperty("output_path") String outputPath) {
+        @JsonProperty("output_path") String outputPath,
+        @JsonProperty("options") GenerateOptions options) {
 }

@@ -72,7 +72,7 @@ _post_gate = threading.Semaphore(1)   # одно сглаживание за р�
 
 @app.post("/process/{task_id}", response_model=ProcessResponse)
 def process(task_id: str, req: ProcessRequest):
-    """Сглаживание Taubin и/или экспорт STL для уже готовой модели. Результат кэшируется по параметрам."""
+    """Модификаторы (Decimate / Subdivision / Smoothing) и экспорт GLB/STL/PLY для готовой модели. Результат кэшируется."""
     if not is_valid_task_id(task_id):
         raise HTTPException(404, "Задача не найдена")
     snap = registry.get(task_id)
@@ -84,10 +84,10 @@ def process(task_id: str, req: ProcessRequest):
     post_dir = settings.data_dir / "tasks" / task_id / "post"
     try:
         with _post_gate:
-            path = postprocess.build_variant(post_dir, req.smoothing, req.format, req.size_mm)
+            path, stats = postprocess.build_variant(
+                post_dir, smoothing=req.smoothing, decimate_ratio=req.decimate_ratio,
+                subdivision=req.subdivision, fmt=req.format, size_mm=req.size_mm)
     except PipelineError as e:
         raise HTTPException(409 if "нет данных" in str(e) else 422, str(e))
-    meta = json.loads((post_dir / "meta.json").read_text(encoding="utf-8"))
-    return ProcessResponse(task_id=task_id, smoothing=req.smoothing, format=req.format,
-                           relative_path=f"post/variants/{path.name}", size_bytes=path.stat().st_size,
-                           vertices=meta["vertices"], faces=meta["faces"])
+    return ProcessResponse(task_id=task_id, format=req.format, file_name=path.name,
+                           relative_path=f"post/variants/{path.name}", size_bytes=path.stat().st_size, **stats)

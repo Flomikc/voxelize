@@ -350,6 +350,21 @@ def write_stl(vertices_native: np.ndarray, faces: np.ndarray, frame: str,
     _atomic_write(out_path, trimesh.Trimesh(v, faces, process=False).export(file_type="stl"))
 
 
+def write_ply(vertices_native: np.ndarray, faces: np.ndarray, vertex_rgba: np.ndarray, frame: str,
+              print_bounds: tuple[np.ndarray, np.ndarray], size_mm: float, out_path: Path) -> None:
+    """
+    PLY с цветами вершин для Blender: Z вверх (как в Blender), миллиметры, на Z=0. Вершины СВАРЕНЫ (без UV-швов),
+    поэтому Decimate / Remesh в Blender не рвут сетку. Импорт: File > Import > Stanford (.ply).
+    """
+    lo0, hi0 = print_bounds
+    scale = size_mm / float((hi0 - lo0).max())
+    v = np.asarray(vertices_native, dtype=np.float64) @ frame_matrix(frame, "print").T
+    lo, hi = v.min(axis=0), v.max(axis=0)
+    v = (v - np.array([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, lo[2]])) * scale
+    mesh = trimesh.Trimesh(v, faces, vertex_colors=vertex_rgba, process=False)
+    _atomic_write(out_path, mesh.export(file_type="ply"))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. ВЫСОКОУРОВНЕВЫЙ ЭКСПОРТ (совместимость с multi_view.py: меш уже в системе glTF)
 # ══════════════════════════════════════════════════════════════════════════════

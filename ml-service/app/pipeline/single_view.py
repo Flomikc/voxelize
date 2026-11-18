@@ -56,6 +56,8 @@ def run(job: Job, progress: ProgressReporter) -> None:
     free_memory()                                         # веса TripoSR больше не нужны
 
     _sanity_check_mesh(mesh)
+    progress(Stage.MESH_GENERATION, 60, "Починка меша (слияние вершин, мусор, дыры, нормали)...")
+    mesh = postprocess.clean(mesh)
     n_raw = len(mesh.faces)
     if opts.polygon_limit and n_raw > opts.polygon_limit:
         progress(Stage.MESH_GENERATION, 70, f"Упрощение меша: {n_raw:,} → {opts.polygon_limit:,} граней...".replace(",", " "))

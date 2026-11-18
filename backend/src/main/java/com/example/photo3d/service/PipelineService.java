@@ -1,6 +1,7 @@
 package com.example.photo3d.service;
 
 import com.example.photo3d.config.MlProperties;
+import com.example.photo3d.dto.GenerateOptions;
 import com.example.photo3d.exception.MlServiceException;
 import com.example.photo3d.model.MlGenerateRequest;
 import com.example.photo3d.model.MlStatusResponse;
@@ -40,7 +41,7 @@ public class PipelineService {
     }
 
     @Async("pipelineExecutor")
-    public void process(String taskId, List<Path> inputFiles) {
+    public void process(String taskId, List<Path> inputFiles, GenerateOptions options) {
         log.info("[{}] Старт обработки, файлов: {}", taskId, inputFiles.size());
         try {
             tasks.update(taskId, TaskStatus.UPLOADING, TaskStatus.UPLOADING.defaultProgress(),
@@ -50,7 +51,8 @@ public class PipelineService {
                     taskId,
                     inputFiles.stream().map(Path::toString).toList(),
                     storage.workDir(taskId).toString(),
-                    storage.modelPath(taskId).toString()));
+                    storage.modelPath(taskId).toString(),
+                    options));
 
             pollUntilFinished(taskId);
 

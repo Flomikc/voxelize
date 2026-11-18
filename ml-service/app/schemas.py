@@ -63,20 +63,25 @@ class GenerateRequest(BaseModel):
 
 
 class ProcessRequest(BaseModel):
-    """POST /process/{task_id}: пост-обработка готовой модели."""
-    smoothing: int = Field(default=0, ge=0, le=10, description="Уровень сглаживания Taubin, 0 = без сглаживания")
-    format: Literal["glb", "stl"] = "glb"
-    size_mm: float = Field(default=100.0, gt=0, le=2000, description="Только для STL: наибольший габарит, мм")
+    """POST /process/{task_id}: стек модификаторов + формат результата."""
+    smoothing: int = Field(default=0, ge=0, le=10, description="Taubin, 0 = выкл.")
+    decimate_ratio: float = Field(default=1.0, ge=0.02, le=1.0, description="Доля оставляемых полигонов, 1.0 = выкл.")
+    subdivision: int = Field(default=0, ge=0, le=2, description="Уровни Subdivision Surface")
+    format: Literal["glb", "stl", "ply"] = "glb"
+    size_mm: float = Field(default=100.0, gt=0, le=2000, description="STL/PLY: наибольший габарит, мм")
 
 
 class ProcessResponse(BaseModel):
     task_id: str
-    smoothing: int
     format: str
-    relative_path: str           # относительно каталога задачи, напр. post/variants/s04.glb
+    file_name: str               # имя файла в post/variants/
+    relative_path: str           # относительно каталога задачи
     size_bytes: int
     vertices: int
     faces: int
+    base_faces: int
+    textured: bool
+    repair: dict = Field(default_factory=dict)
 
 
 class AcceptedResponse(BaseModel):

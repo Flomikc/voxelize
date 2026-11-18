@@ -1,7 +1,8 @@
 /* Voxelize — клиентская логика. Чистый JS, без зависимостей и сборщиков.
  *
- * Поток: drag-and-drop -> POST /api/upload -> опрос GET /api/status/{id} (setInterval)
- *        -> статус DONE -> <model-viewer src="/api/model/{id}.glb">
+ * Поток: drag-and-drop + параметры -> POST /api/upload -> опрос GET /api/status/{id} (setInterval)
+ *        -> DONE -> <model-viewer> + боковое меню модификаторов: POST /api/process/{id}
+ *        -> новый вариант модели (GLB) или экспорт STL / PLY.
  */
 (() => {
   'use strict';
@@ -9,31 +10,31 @@
   // ---------- константы ----------
   const API = '/api';
   const LIMITS = { files: 20, bytes: 20 * 1024 * 1024 };   // синхронизировано с application.yml
-  const POLL_MS = 1000;            // период опроса статуса
-  const REQUEST_TIMEOUT_MS = 8000; // таймаут одного запроса статуса
-  const MAX_POLL_ERRORS = 8;       // подряд неудачных опросов до признания связи потерянной
+  const POLL_MS = 1000;
+  const REQUEST_TIMEOUT_MS = 8000;
+  const PROCESS_TIMEOUT_MS = 200000;   // модификаторы на слабом ПК могут считаться долго
+  const APPLY_DEBOUNCE_MS = 350;
+  const MAX_POLL_ERRORS = 8;
   const STORE_KEY = 'voxelize.task';
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
   // Этапы совпадают со значениями TaskStatus на бэкенде
   const STAGES = [
-    { key: 'QUEUED',           label: 'В очереди',        text: 'Ожидание в очереди' },
-    { key: 'UPLOADING',        label: 'Передача',         text: 'Передача задачи в ML-сервис' },
-    { key: 'DEPTH_ESTIMATION', label: 'Анализ глубины',   text: 'Анализ глубины' },
-    { key: 'MESH_GENERATION',  label: 'Генерация меша',   text: 'Генерация меша' },
+    { key: 'QUEUED',           label: 'В очереди',          text: 'Ожидание в очереди' },
+    { key: 'UPLOADING',        label: 'Передача',           text: 'Передача задачи в ML-сервис' },
+    { key: 'DEPTH_ESTIMATION', label: 'Анализ глубины',     text: 'Анализ глубины' },
+    { key: 'MESH_GENERATION',  label: 'Генерация меша',     text: 'Генерация меша' },
     { key: 'TEXTURING',        label: 'Текстуры и экспорт', text: 'Наложение текстур' },
-    { key: 'DONE',             label: 'Готово',           text: 'Готово' },
+    { key: 'DONE',             label: 'Готово',             text: 'Готово' },
   ];
 
   const $ = (id) => document.getElementById(id);
   const el = {
-    views: {
-      upload: $('panel-upload'), progress: $('panel-progress'),
-      result: $('panel-result'), error: $('panel-error'),
-    },
+    views: { upload: $('panel-upload'), progress: $('panel-progress'), result: $('panel-result'), error: $('panel-error') },
     sys: $('sys'), sysText: $('sys-text'),
     dropzone: $('dropzone'), input: $('file-input'), notice: $('notice'),
     fileList: $('file-list'), modeHint: $('mode-hint'),
+    options: $('options'), optNote: $('opt-note'), optRembg: $('opt-rembg'), detailHint: $('detail-hint'),
     btnStart: $('btn-start'), btnClear: $('btn-clear'),
     stepper: $('stepper'), pct: $('pct'), bar: $('bar'), barFill: $('bar-fill'),
     stageText: $('stage-text'), stageDetail: $('stage-detail'),
@@ -42,13 +43,19 @@
     viewer: $('viewer'), stage: $('viewer-stage'), loader: $('loader'), loaderBar: $('loader-bar'),
     viewerError: $('viewer-error'), resultMeta: $('result-meta'),
     btnRotate: $('btn-rotate'), btnReset: $('btn-reset'), exposure: $('exposure'),
-    btnFullscreen: $('btn-fullscreen'), btnShot: $('btn-shot'), download: $('download'), btnNew: $('btn-new'),
+    btnFullscreen: $('btn-fullscreen'), btnShot: $('btn-shot'), btnNew: $('btn-new'),
+    sidebar: $('sidebar'), modDecimate: $('mod-decimate'), outDecimate: $('out-decimate'), decimateFaces: $('decimate-faces'),
+    modSmooth: $('mod-smooth'), outSmooth: $('out-smooth'), btnModReset: $('btn-mod-reset'),
+    modStatus: $('mod-status'), modStats: $('mod-stats'), modRepair: $('mod-repair'),
+    download: $('download'), stlSize: $('stl-size'), btnStl: $('btn-stl'), btnPly: $('btn-ply'),
   };
 
   const state = {
     files: [], nextId: 1, busy: false,
     taskId: null, startedAt: 0, pollTimer: null, clockTimer: null,
     inFlight: false, pollErrors: 0, lastLogKey: '', lastStageIdx: 0, elapsedAtFinish: '',
+    // результат / модификаторы
+    baseUrl: '', baseStats: null, modsAvailable: true, applySeq: 0, applyCtrl: null, applyTimer: null,
   };
 
   // ---------- утилиты ----------
@@ -57,6 +64,7 @@
   const pad2 = (n) => String(n).padStart(2, '0');
   const fmtTime = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`; };
   const fmtBytes = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} МБ` : `${Math.max(1, Math.round(b / 1024))} КБ`);
+  const fmtNum = (n) => Math.round(n).toLocaleString('ru-RU');
 
   async function fetchT(url, opts = {}, ms = REQUEST_TIMEOUT_MS) {
     const ctrl = new AbortController();
@@ -76,8 +84,7 @@
   function setView(name, { scroll = true } = {}) {
     for (const [key, node] of Object.entries(el.views)) node.hidden = key !== name;
     document.body.dataset.view = name;
-    const heading = el.views[name].querySelector('h2');
-    heading?.focus({ preventScroll: true });
+    el.views[name].querySelector('h2')?.focus({ preventScroll: true });
     if (scroll) el.views[name].scrollIntoView?.({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
   }
 
@@ -96,10 +103,25 @@
     } catch { setSys('down'); }
   }
 
+  // ---------- параметры генерации ----------
+  const checkedValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+
+  function readGenerateOptions() {
+    return {
+      detail_level: checkedValue('detail') ?? 'medium',
+      polygon_limit: checkedValue('poly') ?? '50000',
+      use_rembg: String(el.optRembg.checked),
+    };
+  }
+
+  document.querySelectorAll('input[name="detail"]').forEach((r) => r.addEventListener('change', () => {
+    el.detailHint.textContent = r.dataset.hint || '';
+  }));
+
   // ---------- выбор файлов ----------
   function isAllowed(file) {
     if (file.type === 'image/jpeg' || file.type === 'image/png') return true;
-    return file.type === '' && /\.(jpe?g|png)$/i.test(file.name);   // некоторые ОС не отдают MIME
+    return file.type === '' && /\.(jpe?g|png)$/i.test(file.name);
   }
 
   function showNotice(messages) {
@@ -168,6 +190,10 @@
 
   function renderModeHint(n) {
     el.modeHint.replaceChildren();
+    const multi = n > 1;
+    el.options.classList.toggle('dim', multi);          // параметры детализации относятся к single-view (TripoSR)
+    el.optNote.hidden = !multi;
+    if (multi) el.optNote.textContent = 'Эти параметры применяются в режиме single-view (1 фото); для multi-view действуют настройки сервера.';
     if (n === 0) { el.modeHint.hidden = true; return; }
     const label = document.createElement('b');
     const text = document.createElement('span');
@@ -192,7 +218,8 @@
     showNotice([]);
 
     const form = new FormData();
-    state.files.forEach((f) => form.append('files', f.file, f.file.name));   // поле «files» ждёт UploadController
+    state.files.forEach((f) => form.append('files', f.file, f.file.name));
+    for (const [key, value] of Object.entries(readGenerateOptions())) form.append(key, value);   // detail_level, polygon_limit, use_rembg
 
     try {
       const res = await fetch(`${API}/upload`, { method: 'POST', body: form });
@@ -216,7 +243,7 @@
     state.lastLogKey = '';
     state.lastStageIdx = 0;
     store.write({ id: taskId, startedAt });
-    clearFiles();                       // превью больше не нужны — освобождаем память
+    clearFiles();
 
     el.taskId.textContent = `task ${taskId.slice(0, 8)}`;
     el.log.replaceChildren();
@@ -234,18 +261,18 @@
   function startPolling() {
     stopPolling();
     state.pollErrors = 0;
-    poll();                                            // первый опрос сразу
+    poll();
     state.pollTimer = setInterval(poll, POLL_MS);
   }
   function stopPolling() { clearInterval(state.pollTimer); state.pollTimer = null; }
 
   async function poll() {
-    if (state.inFlight || !state.taskId) return;       // не накапливаем параллельные запросы
+    if (state.inFlight || !state.taskId) return;
     state.inFlight = true;
     const id = state.taskId;
     try {
       const res = await fetchT(`${API}/status/${encodeURIComponent(id)}`, { cache: 'no-store' });
-      if (id !== state.taskId) return;                 // пользователь уже начал другую задачу
+      if (id !== state.taskId) return;
       if (res.status === 404) { fail('Задача не найдена на сервере. Возможно, она была удалена по сроку хранения. Запустите генерацию заново.'); return; }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -269,7 +296,6 @@
   function applyStatus(s) {
     const idx = STAGES.findIndex((st) => st.key === s.status);
     if (idx >= 0) state.lastStageIdx = idx;
-
     if (s.status === 'FAILED') { fail(s.error || 'Не удалось сгенерировать модель'); return; }
 
     const pct = clamp(Math.round(Number(s.progress) || 0), 0, 100);
@@ -281,7 +307,7 @@
     el.stageDetail.textContent = s.message && s.message !== stage.text ? s.message : '';
 
     const key = `${s.status}|${s.message}`;
-    if (key !== state.lastLogKey) {                    // в журнал — только смена сообщения
+    if (key !== state.lastLogKey) {
       state.lastLogKey = key;
       logLine(s.message || stage.text, s.status === 'DONE' ? 'ok' : '');
     }
@@ -293,7 +319,7 @@
       el.barFill.classList.remove('running');
       const url = typeof s.modelUrl === 'string' && s.modelUrl.startsWith(`${API}/model/`)
         ? s.modelUrl : `${API}/model/${state.taskId}.glb`;
-      setTimeout(() => { if (state.taskId) showResult(url); }, 500);   // дать увидеть 100%
+      setTimeout(() => { if (state.taskId) showResult(url); }, 500);
     }
   }
 
@@ -364,19 +390,32 @@
     el.viewerError.hidden = false;
   }
 
-  async function showResult(modelUrl) {
+  /** Показывает модель по ссылке и обновляет кнопку «Скачать .glb». */
+  function setModelSrc(url) {
     el.viewerError.hidden = true;
     el.loader.hidden = false;
     el.loaderBar.style.width = '0%';
+    el.viewer.src = url;
+    el.download.href = `${url}${url.includes('?') ? '&' : '?'}download=true`;
+    el.download.download = `voxelize-${(state.taskId || 'model').slice(0, 8)}.glb`;
+  }
+
+  async function showResult(modelUrl) {
     el.exposure.value = '1';
     el.viewer.exposure = 1;
     el.viewer.autoRotate = true;
     el.btnRotate.setAttribute('aria-pressed', 'true');
-
-    el.download.href = `${modelUrl}?download=true`;
-    el.download.download = `voxelize-${state.taskId.slice(0, 8)}.glb`;
     el.resultMeta.textContent = state.elapsedAtFinish ? `готово за ${state.elapsedAtFinish}` : `task ${state.taskId.slice(0, 8)}`;
     el.btnFullscreen.hidden = !document.fullscreenEnabled;
+
+    state.baseUrl = modelUrl;
+    state.baseStats = null;
+    state.modsAvailable = true;
+    resetModifierControls();
+    el.sidebar.classList.remove('disabled');
+    setStatus('', '');
+    el.modStats.textContent = '';
+    el.modRepair.textContent = '';
     setView('result');
 
     // если vendor/model-viewer.min.js не загрузился — не висим вечно на «загрузке»
@@ -384,8 +423,11 @@
       customElements.whenDefined('model-viewer').then(() => true),
       delay(6000).then(() => false),
     ]);
-    if (!defined) { viewerFail('Не загрузился просмотрщик (vendor/model-viewer.min.js). Модель можно скачать кнопкой ниже.'); return; }
-    el.viewer.src = modelUrl;
+    el.download.href = `${modelUrl}?download=true`;
+    el.download.download = `voxelize-${state.taskId.slice(0, 8)}.glb`;
+    if (!defined) { viewerFail('Не загрузился просмотрщик (vendor/model-viewer.min.js). Модель можно скачать кнопкой справа.'); return; }
+    setModelSrc(modelUrl);
+    loadBaseStats();
   }
 
   el.viewer.addEventListener('progress', (e) => {
@@ -400,9 +442,9 @@
     el.btnRotate.setAttribute('aria-pressed', String(on));
   });
   el.btnReset.addEventListener('click', () => {
-    el.viewer.cameraOrbit = 'auto auto auto';
+    el.viewer.cameraOrbit = '0deg 75deg 105%';      // те же значения, что в атрибутах <model-viewer>
     el.viewer.cameraTarget = 'auto auto auto';
-    el.viewer.fieldOfView = 'auto';
+    el.viewer.fieldOfView = '30deg';
     el.viewer.jumpCameraToGoal?.();
   });
   el.exposure.addEventListener('input', () => { el.viewer.exposure = Number(el.exposure.value); });
@@ -418,15 +460,176 @@
       const a = document.createElement('a');
       a.href = url; a.download = 'voxelize-preview.png'; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch { /* модель ещё не загружена — молча игнорируем */ }
+    } catch { /* модель ещё не загружена */ }
   });
+
+  // ---------- модификаторы (боковое меню) ----------
+  const currentMods = () => ({
+    decimate_ratio: Number(el.modDecimate.value) / 100,
+    subdivision: Number(checkedValue('sub') ?? 0),
+    smoothing: Number(el.modSmooth.value),
+  });
+  const isIdentity = (m) => m.decimate_ratio >= 1 && m.subdivision === 0 && m.smoothing === 0;
+
+  function setStatus(text, kind = '') {
+    el.modStatus.textContent = text;
+    el.modStatus.className = `mod-status ${kind}`.trim();
+  }
+  function setBusy(busy) { el.sidebar.setAttribute('aria-busy', String(busy)); }
+
+  function updateModLabels() {
+    const m = currentMods();
+    el.outDecimate.textContent = `${Math.round(m.decimate_ratio * 100)}%`;
+    el.outSmooth.textContent = String(m.smoothing);
+    if (state.baseStats) {
+      const est = state.baseStats.base_faces * m.decimate_ratio * 4 ** m.subdivision;
+      el.decimateFaces.textContent = `≈ ${fmtNum(est)} полигонов (исходно ${fmtNum(state.baseStats.base_faces)})`;
+    }
+  }
+
+  function resetModifierControls() {
+    el.modDecimate.value = '100';
+    el.modSmooth.value = '0';
+    const off = document.querySelector('input[name="sub"][value="0"]');
+    if (off) off.checked = true;
+    el.decimateFaces.textContent = 'доля оставляемых полигонов';
+    updateModLabels();
+  }
+
+  function describeRepair(r) {
+    if (!r) return '';
+    const parts = [];
+    if (r.merged_vertices) parts.push(`сварено ${fmtNum(r.merged_vertices)} дублей вершин`);
+    if (r.floaters_removed) parts.push(`удалено кусков-«мусора»: ${r.floaters_removed}`);
+    if (r.holes_filled) parts.push(`закрыто дыр: ${r.holes_filled}`);
+    if (r.degenerate_faces || r.duplicate_faces) parts.push(`убрано вырожденных граней: ${fmtNum((r.degenerate_faces || 0) + (r.duplicate_faces || 0))}`);
+    if (r.non_manifold_faces) parts.push(`non-manifold граней: ${r.non_manifold_faces}`);
+    if (r.flipped_components) parts.push(`развёрнуто наружу: ${r.flipped_components}`);
+    return parts.length ? `Автопочинка меша: ${parts.join(' · ')}` : 'Автопочинка меша: исправлений не потребовалось';
+  }
+
+  function showStats(s) {
+    const kind = s.textured ? 'текстура' : 'цвета вершин';
+    el.modStats.textContent = `${fmtNum(s.faces)} полигонов · ${fmtNum(s.vertices)} вершин · ${kind}`;
+  }
+
+  async function postProcess(body, signal) {
+    const res = await fetch(`${API}/process/${encodeURIComponent(state.taskId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    });
+    const data = await readJson(res);
+    if (!res.ok) {
+      const err = new Error(data?.error || `Ошибка сервера (HTTP ${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  /** Статистика исходной модели + отчёт автопочинки. Для multi-view (нет данных пост-обработки) меню отключается. */
+  async function loadBaseStats() {
+    const id = state.taskId;
+    try {
+      const data = await postProcess({ format: 'glb' });
+      if (id !== state.taskId) return;
+      state.baseStats = { base_faces: data.baseFaces, faces: data.faces, vertices: data.vertices, textured: data.textured };
+      showStats(state.baseStats);
+      el.modRepair.textContent = describeRepair(data.repair);
+      updateModLabels();
+    } catch (e) {
+      if (id !== state.taskId) return;
+      if (e.status === 409 || e.status === 404) {
+        state.modsAvailable = false;
+        el.sidebar.classList.add('disabled');
+        setStatus('Для этой модели модификаторы недоступны (например, multi-view).', '');
+      }
+    }
+  }
+
+  function scheduleApply() {
+    updateModLabels();
+    clearTimeout(state.applyTimer);
+    state.applyTimer = setTimeout(applyModifiers, APPLY_DEBOUNCE_MS);
+  }
+
+  async function applyModifiers() {
+    if (!state.taskId || !state.modsAvailable) return;
+    const mods = currentMods();
+    const seq = ++state.applySeq;
+    state.applyCtrl?.abort();                           // устаревший запрос больше не нужен
+
+    if (isIdentity(mods)) {                             // всё выключено — исходная модель, без запроса
+      setBusy(false);
+      setModelSrc(state.baseUrl);
+      if (state.baseStats) showStats(state.baseStats);
+      setStatus('Исходная модель', 'ok');
+      return;
+    }
+
+    const ctrl = new AbortController();
+    state.applyCtrl = ctrl;
+    const timer = setTimeout(() => ctrl.abort(), PROCESS_TIMEOUT_MS);
+    setBusy(true);
+    setStatus('Применяю модификаторы…', '');
+    try {
+      const data = await postProcess({ ...mods, format: 'glb' }, ctrl.signal);
+      if (seq !== state.applySeq) return;
+      setModelSrc(data.url);
+      showStats(data);
+      setStatus('Готово', 'ok');
+    } catch (e) {
+      if (seq !== state.applySeq) return;
+      setStatus(e.name === 'AbortError' ? 'Слишком долго — попробуйте меньшие значения.' : e.message, 'err');
+    } finally {
+      clearTimeout(timer);
+      if (seq === state.applySeq) setBusy(false);
+    }
+  }
+
+  async function exportAs(format) {
+    if (!state.taskId) return;
+    const size = clamp(Number(el.stlSize.value) || 100, 1, 2000);
+    const btn = format === 'stl' ? el.btnStl : el.btnPly;
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '… готовлю';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), PROCESS_TIMEOUT_MS);
+    try {
+      const data = await postProcess({ ...currentMods(), format, size_mm: size }, ctrl.signal);
+      const a = document.createElement('a');            // экспорт берёт ТЕКУЩИЕ значения модификаторов
+      a.href = `${data.url}?download=true`;
+      document.body.append(a); a.click(); a.remove();
+      setStatus(`${format.toUpperCase()} готов: ${fmtNum(data.faces)} полигонов, ${fmtBytes(data.sizeBytes)}`, 'ok');
+    } catch (e) {
+      setStatus(e.name === 'AbortError' ? 'Экспорт занял слишком много времени.' : e.message, 'err');
+    } finally {
+      clearTimeout(timer);
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  // «input» обновляет подписи на лету, «change» (отпустили ползунок) запускает запрос
+  el.modDecimate.addEventListener('input', updateModLabels);
+  el.modSmooth.addEventListener('input', updateModLabels);
+  el.modDecimate.addEventListener('change', scheduleApply);
+  el.modSmooth.addEventListener('change', scheduleApply);
+  document.querySelectorAll('input[name="sub"]').forEach((r) => r.addEventListener('change', scheduleApply));
+  el.btnModReset.addEventListener('click', () => { resetModifierControls(); scheduleApply(); });
+  el.btnStl.addEventListener('click', () => exportAs('stl'));
+  el.btnPly.addEventListener('click', () => exportAs('ply'));
 
   function resetAll() {
     stopPolling();
     stopClock();
+    clearTimeout(state.applyTimer);
+    state.applyCtrl?.abort();
+    state.applySeq += 1;
     store.clear();
     state.taskId = null;
     state.elapsedAtFinish = '';
+    state.baseStats = null;
     el.viewer.removeAttribute('src');
     clearFiles();
     showNotice([]);
@@ -455,10 +658,9 @@
     el.dropzone.classList.remove('dragover');
     addFiles([...(e.dataTransfer?.files ?? [])]);
   });
-  // промах мимо зоны не должен открывать картинку в браузере и уводить со страницы
   ['dragover', 'drop'].forEach((type) => window.addEventListener(type, (e) => e.preventDefault()));
 
-  document.addEventListener('paste', (e) => {          // Ctrl+V со скриншотом / копией картинки
+  document.addEventListener('paste', (e) => {
     if (document.body.dataset.view !== 'upload') return;
     const images = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
     if (images.length) { e.preventDefault(); addFiles(images); }
@@ -494,6 +696,7 @@
   // ---------- старт ----------
   setView('upload', { scroll: false });
   renderFiles();
+  updateModLabels();
   pingServer();
   restore();
 })();

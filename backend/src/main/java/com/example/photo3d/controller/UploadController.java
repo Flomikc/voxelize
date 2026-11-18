@@ -1,5 +1,6 @@
 package com.example.photo3d.controller;
 
+import com.example.photo3d.dto.GenerateOptions;
 import com.example.photo3d.exception.ApiException;
 import com.example.photo3d.model.UploadResponse;
 import com.example.photo3d.service.PipelineService;
@@ -32,16 +33,25 @@ public class UploadController {
         this.pipeline = pipeline;
     }
 
-    /** Принимает 1..N изображений (поле формы «files»), возвращает task_id. */
+    /**
+     * Принимает 1..N изображений (поле «files») и необязательные параметры генерации:
+     * detail_level (low|medium|high|ultra), polygon_limit (0 = без лимита | 1000..5000000), use_rembg (true|false).
+     */
     @PostMapping(path = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<UploadResponse> upload(@RequestParam("files") List<MultipartFile> files) {
+    public ResponseEntity<UploadResponse> upload(
+            @RequestParam("files") List<MultipartFile> files,
+            @RequestParam(name = "detail_level", defaultValue = "medium") String detailLevel,
+            @RequestParam(name = "polygon_limit", defaultValue = "50000") String polygonLimit,
+            @RequestParam(name = "use_rembg", defaultValue = "true") String useRembg) {
+
+        GenerateOptions options = parseOptions(detailLevel, polygonLimit, useRembg);   // до записи файлов на диск
         String taskId = UUID.randomUUID().toString();
 
-        List<Path> saved = storage.saveUploads(taskId, files);   // валидация + запись на диск
+        List<Path> saved = storage.saveUploads(taskId, files);
         tasks.create(taskId, saved.size());
 
         try {
-            pipeline.process(taskId, saved);                     // @Async: вернётся мгновенно
+            pipeline.process(taskId, saved, options);            // @Async: вернётся мгновенно
         } catch (TaskRejectedException e) {                      // очередь переполнена
             tasks.remove(taskId);
             storage.deleteTask(taskId);
@@ -49,5 +59,22 @@ public class UploadController {
                     "Сервер занят: очередь переполнена, попробуйте позже");
         }
         return ResponseEntity.accepted().body(new UploadResponse(taskId));
+    }
+
+    private static GenerateOptions parseOptions(String detailLevel, String polygonLimit, String useRembg) {
+        String level = detailLevel.trim().toLowerCase();
+        if (!GenerateOptions.DETAIL_LEVELS.contains(level)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "detail_level: low, medium, high или ultra");
+        }
+        int limit;
+        try {
+            limit = Integer.parseInt(polygonLimit.trim());
+        } catch (NumberFormatException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "polygon_limit должен быть числом");
+        }
+        if (limit != 0 && (limit < 1_000 || limit > 5_000_000)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "polygon_limit: 0 (без лимита) или от 1000 до 5 000 000");
+        }
+        return new GenerateOptions(level, limit, Boolean.parseBoolean(useRembg.trim()));
     }
 }
